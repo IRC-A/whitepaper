@@ -2,7 +2,7 @@
 ## Decentralized Agent Networks, Semantic Capability Routing, and Secure-by-Design Software Architecture
 
 **Author:** Sandro G.  
-**Version:** 1.0.0  
+**Version:** 1.2.0  
 **Date:** July 2026  
 **Category:** Software Architecture / Artificial Intelligence Infrastructure / Secure Software Engineering  
 **Copyright (c) 2026 Sandro G. All rights reserved. Licensed under AGPLv3 / Commercial Dual License.**
