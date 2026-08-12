@@ -1,0 +1,85 @@
+# IRC-A Whitepaper → PDF automático
+
+name: Release Whitepaper PDF
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'          # solo dispara si cambia el whitepaper
+  workflow_dispatch:          # permite correrlo a mano desde Actions
+
+permissions:
+  contents: write             # necesario para crear el Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) Extraer la versión del encabezado del whitepaper
+      - name: Extract version
+        id: ver
+        run: |
+          VERSION=$(grep -m1 -oP '\*\*Version:\*\*\s*\K[0-9]+\.[0-9]+\.[0-9]+' README.md)
+          if [ -z "$VERSION" ]; then
+            echo "::error::No se encontró '**Version:** X.Y.Z' en README.md"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Versión detectada: $VERSION"
+
+      # 2) Cortar si el tag ya existe (obliga a subir la versión)
+      - name: Guard against existing tag
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/v${{ steps.ver.outputs.version }}$"; then
+            echo "::error::El tag v${{ steps.ver.outputs.version }} ya existe. Subí el número de versión en el encabezado del whitepaper."
+            exit 1
+          fi
+
+      # 3) Renderizar diagramas Mermaid → PNG y reemplazarlos en una copia del md
+      - name: Install mermaid-cli
+        run: npm install -g @mermaid-js/mermaid-cli
+
+      - name: Render mermaid diagrams
+        run: |
+          echo '{"args":["--no-sandbox","--disable-gpu"]}' > puppeteer-config.json
+          python3 << 'EOF'
+          import re, subprocess, pathlib
+          src = pathlib.Path('README.md').read_text()
+          blocks = re.findall(r'```mermaid\n(.*?)```', src, flags=re.S)
+          for i, b in enumerate(blocks, 1):
+              pathlib.Path(f'diag{i}.mmd').write_text(b)
+              subprocess.run(['mmdc', '-p', 'puppeteer-config.json', '-t', 'neutral',
+                              '-b', 'white', '-i', f'diag{i}.mmd', '-o', f'diag{i}.png',
+                              '-w', '1600'], check=True)
+          for i in range(1, len(blocks) + 1):
+              src = re.sub(r'```mermaid\n.*?```', f'![diagram](diag{i}.png)', src, count=1, flags=re.S)
+          pathlib.Path('whitepaper_build.md').write_text(src)
+          print(f'{len(blocks)} diagramas renderizados')
+          EOF
+
+      # 4) Generar el PDF
+      - name: Build PDF with pandoc
+        uses: docker://pandoc/extra:3.2
+        with:
+          args: >-
+            whitepaper_build.md -f gfm
+            -o "IRC-A-Protocol-v${{ steps.ver.outputs.version }}.pdf"
+            --pdf-engine=xelatex
+            -V geometry:margin=2.2cm -V fontsize=11pt
+            -V colorlinks=true -V linkcolor=NavyBlue -V urlcolor=NavyBlue
+            --highlight-style=tango
+
+      # 5) Crear el Release con el PDF adjunto
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: IRC-A Protocol Whitepaper v${{ steps.ver.outputs.version }}
+          body: |
+            Versión congelada del whitepaper **IRC-A (Internet Relay Chat for Agents)**.
+            Fuente canónica viva: `README.md` de este repo.
+            Licencia: AGPLv3 / Commercial Dual License.
+          files: IRC-A-Protocol-v${{ steps.ver.outputs.version }}.pdf
