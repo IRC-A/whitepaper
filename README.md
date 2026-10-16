@@ -4,7 +4,7 @@
 
 - **Author:** Sandro García
 - **Date:** October 2026
-- **Version:** 1.4.0
+- **Version:** 1.4.1
 - **Category:** Software Architecture / Artificial Intelligence Infrastructure / Secure Software Engineering
 - **Copyright (c) 2026 Sandro García. All rights reserved. Licensed under AGPLv3 / Commercial Dual License.**
 
@@ -18,7 +18,7 @@ Under the IRC-A architecture, the BFA perimeter acts strictly as a secure Regist
 
 **Two-Phase Capability Negotiation (v1.3.0):** The DET exchange formalizes into two strictly separated, fully stateless phases. In **Phase 1 (`/discover`)**, the agent simply asks the network _"can anyone solve this?"_ — like joining an IRC channel and asking who is online. The Gateway answers with the matching capability, its endpoint, and the exact parameter contracts. The agent gathers parameters locally. In **Phase 2 (`/authorize`)**, the agent presents intent **plus** concrete arguments, and the Gateway mints the ephemeral DET — cryptographically locking authorized parameters into the token.
 
-**New in v1.4.0 — Bi-directional Capability Contracts (`output_schema` & Anti-Echo Protocol) and Honest Failure Contracts:**
+**New in v1.4.1 — Bi-directional Capability Contracts (`output_schema` & Anti-Echo Protocol) and Honest Failure Contracts:**
 1. **Bi-directional Capability Contracts:** Discovery in Phase 1 now exposes both `input_schema` and canonical `output_schema`. By providing formal foresight of return structures, cognitive agents plan downstream tool chaining deterministically, eradicating hallucinated property names during intermediate reasoning steps.
 2. **Anti-Echo Token Economization:** Tool responses are strictly prohibited from echoing back input arguments (e.g. customer IDs, dates, tenant identifiers) into the agent's context window. Payload responses must deliver solely synthesized domain results and operational status, pruning hundreds of redundant tokens per conversational turn.
 3. **Honest Failure Contracts & Elimination of Fictitious Fallbacks:** Eliminating silent/mock fallbacks (e.g. fabricated fallback records or simulated credit scores) that deceive LLMs into making commitments on non-existent data. When transactional backends fail, tools must execute bounded retries with backoff and return capturable, structured error contracts identifying the exact root cause.
@@ -226,7 +226,7 @@ graph TB
 
 The Gateway acts strictly as a lightweight registry broker. It holds no business logic and never touches raw transaction payloads. It manages:
 
-- A relational JSON registry mapping active node IDs, capabilities, public keys, logical channel requirements, and — **formalized in v1.4.0** — the declared **Bi-directional Capability Contracts (`input_schema` and `output_schema`)** of every capability.
+- A relational JSON registry mapping active node IDs, capabilities, public keys, logical channel requirements, and — **formalized in v1.4.1** — the declared **Bi-directional Capability Contracts (`input_schema` and `output_schema`)** of every capability.
 - A local FAISS (Facebook AI Similarity Search) index storing dense embeddings of capability descriptions registered on-the-fly.
 
 **Registering a Capability on-the-fly:**
@@ -344,7 +344,7 @@ The Gateway evaluates channel masking against the agent's registered `IRCA_CHANN
 
 **Design properties of Phase 1:**
 
-- **Deterministic downstream planning (v1.4.0):** Having immediate visibility into `output_schema` enables the cognitive agent to formulate downstream chains (e.g. knowing whether a field is named `score` or `credit_rating`) without trial-and-error hallucinations or exploratory runtime probes.
+- **Deterministic downstream planning (v1.4.1):** Having immediate visibility into `output_schema` enables the cognitive agent to formulate downstream chains (e.g. knowing whether a field is named `score` or `credit_rating`) without trial-and-error hallucinations or exploratory runtime probes.
 - **Stateless by construction.** There is no match ID, no server-side session, no promise to honor. The Gateway is a directory; asking who is in the channel creates no obligation on anyone's part.
 - **Cacheable.** Because the response has no side effects, agents may cache inquiry results per intent. _"Who can audit compliance?"_ does not change between conversational turns, so repeated work avoids repeated Gateway round-trips — consistent with the anti-prompt-bloat economics of IRC-A.
 - **Fail-soft.** If nothing matches within the agent's channels, the Gateway returns `404 Capability not found` — the same masking behavior as before, now surfaced earlier in the lifecycle, before any token is minted.
@@ -918,7 +918,7 @@ Let's review the secure architectural lifecycle of a mortgage application proces
 
 The IRC-A architecture demonstrates that the challenges of implementing generative AI inside enterprise environments are not solved by developing larger models or writing longer prompts, but by applying rigorous software engineering. By returning to Smalltalk's principles of messaging and isolated responsibilities, using decentralized capability pooling, and encapsulating zero-trust authorization in a base SDK class (`BFAAgent`) via Ephemeral Delegated Execution Tokens (DET), we can build agentic networks that are robust, secure, and ready for high-compliance production workloads.
 
-Version 1.4.0 advances this thesis into industrial reliability and context economics. By coupling bi-directional capability contracts (`output_schema`) with the Anti-Echo Protocol, IRC-A guarantees hallucination-free tool chaining while drastically reducing LLM context window consumption. Concurrently, by establishing Honest Failure Contracts and eradicating fictitious fallbacks, the architecture brings enterprise-grade predictability and resilience to autonomous agent fleets without compromising Smalltalk-style isolation.
+Version 1.4.1 advances this thesis into industrial reliability and context economics. By coupling bi-directional capability contracts (`output_schema`) with the Anti-Echo Protocol, IRC-A guarantees hallucination-free tool chaining while drastically reducing LLM context window consumption. Concurrently, by establishing Honest Failure Contracts and eradicating fictitious fallbacks, the architecture brings enterprise-grade predictability and resilience to autonomous agent fleets without compromising Smalltalk-style isolation.
 
 To align with this, the BFA-SDK is distributed under a **Dual-License Model**:
 
@@ -939,7 +939,7 @@ Our engineering roadmap for the BFA-SDK focuses on:
 
 | Version | Date | Summary of Changes |
 | --- | --- | --- |
-| 1.4.0 | October 2026 | **Bi-directional Capability Contracts, Anti-Echo Protocol & Honest Failure Contracts:** Formalized dual capability contracts (`input_schema` + `output_schema`) in Phase 1 discovery to eliminate property hallucinations during multi-tool chaining. Enforced the Anti-Echo Protocol in `BFAMCP` to prune redundant input arguments from response payloads, drastically reducing context window token bloat. Formalized Honest Failure Contracts requiring bounded localized retries and structured capturable error payloads, eradicating silent mock fallbacks in production tool servers. |
+| 1.4.1 | October 2026 | **Bi-directional Capability Contracts, Anti-Echo Protocol & Honest Failure Contracts:** Formalized dual capability contracts (`input_schema` + `output_schema`) in Phase 1 discovery to eliminate property hallucinations during multi-tool chaining. Enforced the Anti-Echo Protocol in `BFAMCP` to prune redundant input arguments from response payloads, drastically reducing context window token bloat. Formalized Honest Failure Contracts requiring bounded localized retries and structured capturable error payloads, eradicating silent mock fallbacks in production tool servers. |
 | 1.3.0 | October 2026 | **Two-phase capability negotiation:** `/discover` formalized as a stateless, unsigned, cacheable capability inquiry; new `/authorize` endpoint mints the DET only after concrete arguments are presented, with channel masking re-evaluated at authorization. `input_schema` added to the capability registration payload. `BFAMCP` gains environment-driven optional DET enforcement (Mode A strict / Mode B standard MCP) via `BFA_GATEWAY_PUBLIC_KEY`. Sequence diagrams, layered diagram, case study, and benefits matrix updated accordingly. |
 | 1.2.0 | August 2026 | Added §7.3 Semantic Prompt Hash Integrity Verification; dual-license model; mermaid/ASCII diagram pair. |
 | 1.1.0 | July 2026 | Initial public release: BFA customs-office perimeter, FAISS masked discovery, DET parameter lockdown, multi-agent loop tracing, prompt rewriting. |
