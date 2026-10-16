@@ -4,7 +4,7 @@
 
 - **Author:** Sandro García
 - **Date:** October 2026
-- **Version:** 1.3.0
+- **Version:** 1.4.0
 - **Category:** Software Architecture / Artificial Intelligence Infrastructure / Secure Software Engineering
 - **Copyright (c) 2026 Sandro García. All rights reserved. Licensed under AGPLv3 / Commercial Dual License.**
 
@@ -16,7 +16,12 @@ Contemporary enterprise multi-agent architectures suffer from tight coupling, a 
 
 Under the IRC-A architecture, the BFA perimeter acts strictly as a secure Registry, Governance, and Semantic Customs Office. The Cognitive Agents (Reasoning Layer) and the FastMCP Tool Servers (Execution Layer) operate in a distributed fashion, physically decoupled from the core BFA gateway. Once a capability is located and authorized, interaction and payload delivery occur directly and peer-to-peer (P2P or A2A) utilizing cryptographically signed Ephemeral Delegated Execution Tokens (DET), completely avoiding gateway bottlenecks. Furthermore, we establish a rigorous network boundary where only the FastMCP servers hold physical connections to the external Core Database/Enterprise APIs, securing the development lifecycle from the ground up and mitigating semantic prompt-injection vulnerabilities by design.
 
-**New in v1.3.0 — Two-Phase Capability Negotiation:** The DET exchange has been formalized into two strictly separated, fully stateless phases. In **Phase 1 (`/discover`)**, the agent simply asks the network _"can anyone solve this?"_ — like joining an IRC channel and asking who is online. The Gateway answers with the matching capability, its endpoint, and the exact **input schema** of the parameters it requires. The agent then gathers those parameters locally (from the conversation, from another tool, or from a user). Only in **Phase 2 (`/authorize`)** does the agent present intent **plus** concrete arguments, and only then does the Gateway mint the ephemeral DET — cryptographically locking the authorized parameters into the token. This separation guarantees that the parameter lockdown is constructed, never guessed, while keeping the Gateway free of session state.
+**Two-Phase Capability Negotiation (v1.3.0):** The DET exchange formalizes into two strictly separated, fully stateless phases. In **Phase 1 (`/discover`)**, the agent simply asks the network _"can anyone solve this?"_ — like joining an IRC channel and asking who is online. The Gateway answers with the matching capability, its endpoint, and the exact parameter contracts. The agent gathers parameters locally. In **Phase 2 (`/authorize`)**, the agent presents intent **plus** concrete arguments, and the Gateway mints the ephemeral DET — cryptographically locking authorized parameters into the token.
+
+**New in v1.4.0 — Bi-directional Capability Contracts (`output_schema` & Anti-Echo Protocol) and Decoupled Incident Management:**
+1. **Bi-directional Capability Contracts:** Discovery in Phase 1 now exposes both `input_schema` and canonical `output_schema`. By providing formal foresight of return structures, cognitive agents plan downstream tool chaining deterministically, eradicating hallucinated property names during intermediate reasoning steps.
+2. **Anti-Echo Token Economization:** Tool responses are strictly prohibited from echoing back input arguments (e.g. customer IDs, dates, tenant identifiers) into the agent's context window. Payload responses must deliver solely synthesized domain results and operational status, pruning hundreds of redundant tokens per conversational turn.
+3. **Decoupled Incident Management & Deterministic Deduplication (`unithos-error-manager`):** Operational error handling, alerting (Email, SMS, Webhooks), and triage are excised from business tools and unified into an asynchronous Incident Hub. Failures undergo deterministic SHA-256 fingerprinting with dynamic variable masking to prevent alert fatigue during cascading outages, and silent/mock fallbacks are eliminated in favor of retry-aware, structured error contracts inspectable via native MCP tools.
 
 > **The Core Paradigm of IRC-A:**
 >
@@ -135,37 +140,41 @@ graph TB
     %% Token Minting Engine (Sits between Layer 1 and 2)
     token_engine[Token Minting Engine<br/>DET Issuer - PASETO]:::TokenLayer
 
-    %% Layer 2: Support and Semantic Routing Layer
-    subgraph Layer2 [SUPPORT & SEMANTIC ROUTING LAYER - IRC-A / BFA Gateway]
+    %% Layer 2: Support, Semantic Routing & Observability Layer
+    subgraph Layer2 [SUPPORT, ROUTING & INCIDENT GOVERNANCE - IRC-A / BFA Gateway]
         bfa_broker[BFA Core Broker<br/>Stateless Router]:::GatewayLayer
-        faiss_index[(FAISS Index<br/>Intent Mapping & Masking)]:::FAISSLayer
+        faiss_index[(FAISS Index<br/>Intent & Schema Directory)]:::FAISSLayer
         mcp_server[MCP Server Searcher<br/>Offline DET Validation]:::ExecutionLayer
+        error_hub[Centralized Incident Hub<br/>unithos-error-manager]:::GatewayLayer
     end
 
-    %% Layer 3: Execution and Data Access Layer
-    subgraph Layer3 [EXECUTION & DATA ACCESS LAYER]
+    %% Layer 3: Execution, Data Access & Alerting Layer
+    subgraph Layer3 [EXECUTION & ALERT DISPATCH LAYER]
         core_app[Core Applications]:::DBLayer
-        apis[APIs]:::CognitiveLayer
-        dbs[(DBs)]:::ExecutionLayer
+        apis[Enterprise APIs]:::CognitiveLayer
+        dbs[(Transactional DBs)]:::ExecutionLayer
+        alerts[Alert Channels<br/>SMTP Email / SMS / Webhooks]:::DBLayer
     end
 
     %% Relations Layer 1
     agent_a <-->|Protocolo Inter-Agente A2A| agent_b
     agent_a -->|FastMCP Invocation| mcp_tools
 
-    %% Relations Layer 1 -> Layer 2 (Two-Phase Discovery)
+    %% Relations Layer 1 -> Layer 2 (Two-Phase Discovery with Dual Contracts)
     agent_a -->|1. Registro de Agente| bfa_broker
     agent_a -->|2. Consulta: ¿quién puede resolver? (/discover)| bfa_broker
     bfa_broker -->|3. Búsqueda Semántica con Máscara| faiss_index
-    faiss_index -->|Candidatos + input_schema (sin firma)| bfa_broker
+    faiss_index -->|Candidatos + input_schema + output_schema| bfa_broker
     agent_a -.->|4. Recolecta parámetros (local)| agent_a
     agent_a -->|5. /authorize (intención + args)| bfa_broker
     bfa_broker -->|6. Re-evalúa match + canales| faiss_index
     bfa_broker -->|7. Match Habilidad + Generar DET| token_engine
     token_engine -->|8. Retorna Ruta + DET PASETO Efímero| agent_a
 
-    %% Relations Layer 1 -> Layer 3 (Sandbox Execution Boundary)
+    %% Relations Layer 1 -> Layer 3 (Sandbox Execution Boundary & Incident Governance)
     mcp_tools -->|9. Conexión Exclusiva de Datos| Layer3
+    mcp_tools -.->|10. Asynchronous Incident Report (SHA-256 Non-blocking)| error_hub
+    error_hub -.->|11. Deduplicated Incident Alert Dispatch| alerts
 
     %% Styling subgraphs
     style Layer1 class:Subgraphs;
@@ -181,52 +190,55 @@ graph TB
   |                                                                                         |
   |   [ Agente Nodo A ] <============ Inter-Agent A2A Protocol ============> [ Agente B ]   |
   |      (BaseAgent)                                                           (BaseAgent)  |
-  |           |                                                                             |
-  |           | FastMCP (mTLS)                                                              |
-  |           v                                                                             |
-  |     [ MCP Tools ] (BaseMCP/BFAMCP) -----------------------+                             |
-  +-----------|-----------------------------------------------|-----------------------------+
-              | 1. Register Node                              |
-              | 2. Capability Inquiry (/discover)             |
-              v                                               |
-  +-----------|-----------------------------------------------|-----------------------------+
-  | SUPPORT & SEMANTIC ROUTING LAYER (BFA Gateway Registry)   |                           |
-  |                                                             |                           |
-  |   [ BFA Core Broker ] (Stateless Router)                    |                           |
-  |           |                                                 |                           |
-  |           | 3. Semantic Search with Masking                 |                           |
-  |           v                                                 |                           |
-  |     [ FAISS Index ] (Intent Mapping)                        |                           |
-  |           |                                                 |                           |
-  |   << agent gathers parameters locally (agent-side only) >>  |                           |
-  |           |                                                 |                           |
-  |   5. POST /authorize (intent + args) ------> 6. Re-verify   |                           |
-  |           |                                    channels     |                           |
-  |           | 7. Match Skill & Generate DET                   |                           |
-  |           v                                                 |                           |
-  |   [ Token Minting Engine ] (DET Issuer - PASETO)            |                           |
-  |           |                                                 |                           |
-  |           +========== 8. Return Route + Ephemeral DET ======+                           |
-  +-----------------------------------------------------------------------------------------+
-                                                                |
-                                                                | 9. Exclusive Data Connection
-                                                                v
-                                                    +-----------------------+
-                                                    | EXECUTION & DATA      |
-                                                    | [Core Apps, APIs, DB] |
-                                                    +-----------------------+
+  |           |                                                                     ^       |
+  |           | FastMCP (mTLS)                                                      |       |
+  |           v                                                                     |       |
+  |     [ MCP Tools ] (BFAMCP - Anti-Echo) -------------------+                     |       |
+  +-----------|-----------------------------------------------|---------------------|-------+
+              | 1. Register Node                              |                     |
+              | 2. Capability Inquiry (/discover)             |                     |
+              v                                               |                     |
+  +-----------|-----------------------------------------------|---------------------|-------+
+  | SUPPORT & INCIDENT GOVERNANCE LAYER (BFA Gateway & Incident Hub)                |       |
+  |                                                             |                   |       |
+  |   [ BFA Core Broker ] (Stateless Router)                    |                   |       |
+  |           |                                                 |                   |       |
+  |           | 3. Semantic Search with Masking                 |                   |       |
+  |           v                                                 |                   |       |
+  |     [ FAISS Index ] (Intent + In/Out Schemas)               |                   |       |
+  |           |                                                 |                   |       |
+  |   << agent gathers parameters locally (agent-side only) >>  |                   |       |
+  |           |                                                 |                   |       |
+  |   5. POST /authorize (intent + args) ------> 6. Re-verify   |                   |       |
+  |           |                                    channels     |                   |       |
+  |           | 7. Match Skill & Generate DET                   |                   |       |
+  |           v                                                 |                   |       |
+  |   [ Token Minting Engine ] (DET Issuer - PASETO)            |                   |       |
+  |           |                                                 |                   |       |
+  |           +========== 8. Return Route + Ephemeral DET ======+                   |       |
+  |                                                             |                   |       |
+  |   [ Centralized Incident Hub: unithos-error-manager ] <-----+                   |       |
+  |     (Deterministic SHA-256 Deduplication & Alerting)        | (10. Async Report)|       |
+  |           |                                                 |                   |       |
+  +-----------|-------------------------------------------------|-------------------|-------+
+              | 11. Multi-Channel Alert (Email/SMS/Webhook)     | 9. Exclusive Data |
+              v                                                 v                   v
+  +---------------------------+                     +---------------------------------------+
+  | ALERT CHANNELS & ON-CALL  |                     | EXECUTION & DATA (Core Apps, DBs)     |
+  | [SMTP, SMS, Ops Webhooks] |                     | (Postgres, Core PMS, Microservices)   |
+  +---------------------------+                     +---------------------------------------+
 ```
 
 ## 4.2 The Semantic Discovery Gateway (FAISS Index)
 
 The Gateway acts strictly as a lightweight registry broker. It holds no business logic and never touches raw transaction payloads. It manages:
 
-- A relational JSON registry mapping active node IDs, capabilities, public keys, logical channel requirements, and — **new in v1.3.0** — the declared `input_schema` of every capability.
+- A relational JSON registry mapping active node IDs, capabilities, public keys, logical channel requirements, and — **formalized in v1.4.0** — the declared **Bi-directional Capability Contracts (`input_schema` and `output_schema`)** of every capability.
 - A local FAISS (Facebook AI Similarity Search) index storing dense embeddings of capability descriptions registered on-the-fly.
 
 **Registering a Capability on-the-fly:**
 
-When an autonomous FastMCP tool server boots up, it initiates a cryptographic registration payload to the Gateway. The registration now includes the machine-readable input contract of each capability, so that Phase 1 of discovery can answer _"what do you need from me?"_ without ever contacting the tool server:
+When an autonomous FastMCP tool server boots up, it initiates a cryptographic registration payload to the Gateway. The registration includes the machine-readable input and output contracts of each capability, so that Phase 1 of discovery can answer both _"what do you need from me?"_ and _"what will you return to me?"_ without ever contacting the tool server:
 
 ```
 POST /register
@@ -256,17 +268,42 @@ Content-Type: application/json
           }
         },
         "required": ["customer_id"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["CLEARED", "FLAGGED", "REQUIRES_REVIEW"]
+          },
+          "risk_score": {
+            "type": "number",
+            "description": "Calculated institutional risk rating between 0 and 100"
+          },
+          "violations": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of triggered compliance violation codes"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable summary of the audit verdict"
+          }
+        },
+        "required": ["status", "risk_score", "violations", "message"]
       }
     }
   ]
 }
 ```
 
-The Gateway generates high-dimensional embeddings of this metadata block using a lightweight local representation model (e.g., `all-MiniLM-L6-v2`) and appends it to the FAISS vector space. Note that the `input_schema` is indexed as structured metadata alongside the embedding — it is returned verbatim in discovery responses but never participates in the similarity calculation.
+The Gateway generates high-dimensional embeddings of this metadata block using a lightweight local representation model (e.g., `all-MiniLM-L6-v2`) and appends it to the FAISS vector space. Note that `input_schema` and `output_schema` are indexed as structured metadata alongside the embedding — they are returned verbatim in discovery responses but never participate in the similarity calculation.
+
+> **The Anti-Echo Principle:** Note that the declared `output_schema` strictly avoids echoing back input parameters (such as `customer_id` or `threshold_usd`). The caller already knows the arguments it sent; echoing them back into the LLM context window burns expensive tokens without providing cognitive utility. IRC-A tool outputs are strictly minimalist domain projections.
 
 ## 4.3 Two-Phase Discovery: Capability Inquiry and Authorization
 
-**New in v1.3.0.** The interaction between an agent and the BFA Gateway for obtaining execution rights is explicitly split into two phases, following the IRC convention of asking _"who is online?"_ before _"can you do this for me?"_.
+The interaction between an agent and the BFA Gateway for obtaining execution rights is explicitly split into two phases, following the IRC convention of asking _"who is online?"_ before _"can you do this for me?"_.
 
 ### Phase 1 — Capability Inquiry (`/discover`): pure question, zero commitment
 
@@ -281,7 +318,7 @@ Content-Type: application/json
 }
 ```
 
-The Gateway evaluates channel masking against the agent's registered `IRCA_CHANNELS`, restricts the FAISS search accordingly, and returns the best candidate with its declared input contract:
+The Gateway evaluates channel masking against the agent's registered `IRCA_CHANNELS`, restricts the FAISS search accordingly, and returns the best candidate with its declared bi-directional contract (`input_schema` and `output_schema`):
 
 ```
 200 OK
@@ -298,6 +335,15 @@ The Gateway evaluates channel masking against the agent's registered `IRCA_CHANN
         "customer_id": { "type": "string", "description": "Unique enterprise database customer identifier" }
       },
       "required": ["customer_id"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "score": { "type": "integer", "description": "Normalized credit score (300-850)" },
+        "risk_level": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "message": { "type": "string", "description": "Credit bureau status summary" }
+      },
+      "required": ["score", "risk_level", "message"]
     }
   }
 }
@@ -305,6 +351,7 @@ The Gateway evaluates channel masking against the agent's registered `IRCA_CHANN
 
 **Design properties of Phase 1:**
 
+- **Deterministic downstream planning (v1.4.0):** Having immediate visibility into `output_schema` enables the cognitive agent to formulate downstream chains (e.g. knowing whether a field is named `score` or `credit_rating`) without trial-and-error hallucinations or exploratory runtime probes.
 - **Stateless by construction.** There is no match ID, no server-side session, no promise to honor. The Gateway is a directory; asking who is in the channel creates no obligation on anyone's part.
 - **Cacheable.** Because the response has no side effects, agents may cache inquiry results per intent. _"Who can audit compliance?"_ does not change between conversational turns, so repeated work avoids repeated Gateway round-trips — consistent with the anti-prompt-bloat economics of IRC-A.
 - **Fail-soft.** If nothing matches within the agent's channels, the Gateway returns `404 Capability not found` — the same masking behavior as before, now surfaced earlier in the lifecycle, before any token is minted.
@@ -367,7 +414,7 @@ Transactional database drivers (PostgreSQL, core systems) are never imported or 
 - **Mode A — BFA-governed (strict):** if `BFA_GATEWAY_PUBLIC_KEY` is present in the container environment, a middleware intercepts every incoming `tools/call`, requires the `_det` argument, verifies the PASETO signature offline against the Gateway's public key, enforces `exp`, `aud`, `permitted_action`, and the parameter lockdown — and rejects anything invalid with a structured `isError` before the tool function ever executes. Fail-closed.
 - **Mode B — Standard MCP (permissive):** without the Gateway's public key configured, the middleware is inert and the server behaves as a plain FastMCP server, relying on its input-schema validation and whatever authentication the surrounding infrastructure (generic MCP gateways, local stdio clients) provides. Business-input validation is identical in both modes; only the authorization layer changes.
 
-```
+```python
 # BankDataRiver Tool Server - Deployed in an isolated environment holding exclusive DB drivers
 from bfa_sdk import BFAMCP
 from typing import Annotated
@@ -384,8 +431,13 @@ def fetch_customer_credit_score(
 ) -> dict:
     """Queries credit rating indexes securely. Access restricted to isolated execution sandbox."""
     # The cognitive agent has no database credentials. Only this BFAMCP tool connects
-    # to PostgreSQL and returns a cleanly sanitized JSON payload.
-    return {"customer_id": customer_id, "score": 750, "risk_level": "low"}
+    # to PostgreSQL and returns a cleanly sanitized JSON payload adhering to the Anti-Echo contract.
+    # Note: customer_id is omitted from the return payload to eliminate token redundancy in LLM context.
+    return {
+        "score": 750,
+        "risk_level": "low",
+        "message": "Credit bureau rating retrieved successfully"
+    }
 ```
 
 ## 4.6 Passive Observability and Auditing Layer
@@ -394,6 +446,73 @@ In complex, dynamically bound enterprise environments, runtime visibility and au
 
 - **Passive Read-Only State Observation:** The BFA Gateway exposes a stateless metadata endpoint that enables passive monitoring of the network topology. This provides administrators and auditing tools with complete visibility into registered capabilities, active node identities, and logical channel configurations without introducing paths for mutation.
 - **Decoupled Registry Modification:** The observability layer is strictly non-interactive. Nodes register and disconnect solely through authenticated, programmatic SDK handshakes or signed gateway API calls. By preventing manual state modification via operational dashboards, the topology lifecycle remains aligned with automated infrastructure pipelines (GitOps/DevOps) and avoids creating backdoors for unauthorized privilege modification.
+
+## 4.7 Centralized Incident Management & Error Governance Layer (`unithos-error-manager` pattern)
+
+**New in v1.4.0.** In a distributed multi-agent network, error handling and operational alerting must not be left to the individual discretion of business tool implementations. Tightly coupling notification mechanisms (such as SMTP mailers, SMS gateways, or Slack webhooks) inside transactional MCP servers introduces serious architectural liabilities: it pollutes business sandboxes with third-party credentials, blocks execution threads during external I/O delays, and creates chaotic notification storms during cascading infrastructure failures.
+
+IRC-A formalizes the **Centralized Incident Management** architectural pattern (embodied by `unithos-error-manager`), establishing an asynchronous, decoupled subsystem for error capture, deduplication, and triage.
+
+```
++-----------------------------------------------------------------------------------+
+|               DISTRIBUTED EXECUTION LAYER (BFAMCP Tool Servers)                   |
+|                                                                                   |
+|   [ PMS Tool ]             [ Payments Tool ]             [ Booking Tool ]         |
+|         \                         |                         /                     |
+|          +--- Async Dispatch ---- | ---- Async Dispatch ---+                      |
+|               (Non-blocking)      |      (Non-blocking)                           |
++-----------------------------------|-----------------------------------------------+
+                                    v
++-----------------------------------------------------------------------------------+
+|               CENTRALIZED INCIDENT HUB (unithos-error-manager)                    |
+|                                                                                   |
+|   1. Entity Normalization (Mask dynamic UUIDs, timestamps, tenant IDs)            |
+|   2. Deterministic Fingerprint Generation: SHA256(service + type + normalized_msg)|
+|   3. Sliding-Window Deduplication (Default: 300s throttle window)                 |
+|   4. State Lifecycle Tracking (OPEN -> ACKNOWLEDGED -> RESOLVED)                  |
++-----------------------------------------------------------------------------------+
+        |                                                   |
+        v                                                   v
++-----------------------------------+               +-------------------------------+
+| MULTI-CHANNEL ALERT ADAPTERS      |               | NATIVE MCP GOVERNANCE TOOLS   |
+| - SMTP Email (HTML Summaries)     |               | - report_incident             |
+| - Webhook Dispatch (Slack/Teams)  |               | - list_incidents              |
+| - SMS/WhatsApp Emergency Bridge   |               | - resolve_incident            |
++-----------------------------------+               +-------------------------------+
+                                                            ^
+                                                            | IRC-A / A2A Protocol
+                                                    [ Autonomous SRE / Ops Agent ]
+```
+
+### Deterministic Error Fingerprinting & Deduplication
+
+When a downstream database or third-party enterprise API experiences downtime (e.g. an external PMS or payment gateway returning HTTP 503), dozens or hundreds of concurrent agent reasoning loops may trigger the same failing tool simultaneously. Without centralized governance, an alerting pipeline would emit hundreds of duplicate emails and SMS messages within seconds—causing immediate alert fatigue and potentially exhausting provider rate limits.
+
+To solve this, the Incident Hub implements **Deterministic Dynamic-Variable Normalization**:
+
+1. **Dynamic Entity Masking:** Variable strings such as tenant identifiers, customer UUIDs, ISO timestamps, and ephemeral session IDs are stripped or normalized to regex masks (e.g. `[UUID]`, `[ID]`, `[DATE]`).
+2. **Deterministic SHA-256 Hashing:** A normalized canonical string is hashed:
+   $$\text{Fingerprint} = \text{SHA-256}\Big(\text{service\_name} \parallel \text{"::"} \parallel \text{error\_type} \parallel \text{"::"} \parallel \text{normalized\_message}\Big)$$
+3. **Sliding-Window Throttling:** If an incoming error matches an existing `OPEN` or `ACKNOWLEDGED` incident within the temporal window (e.g. 5 minutes), the Incident Hub increments the `occurrence_count`, updates `last_seen_at`, and suppresses redundant alert dispatches. Only the initial occurrence (or an escalation to `CRITICAL`) triggers outbound notifications.
+
+### Non-blocking Asynchronous Dispatch with Graceful Fallback
+
+FastMCP tools report incidents to the Incident Hub through non-blocking asynchronous calls (e.g. `asyncio.create_task` or worker threads via `httpx`). Under no circumstance does an incident dispatch block the tool server's event loop or delay the cognitive agent's reasoning cycle. Furthermore, if the Incident Hub is temporarily unreachable, the tool server gracefully logs the error locally without cascading or dropping the client RPC connection.
+
+### Elimination of Fictitious Fallbacks
+
+A catastrophic anti-pattern in generative agent architectures is the use of "silent mock fallbacks" (e.g. returning a hardcoded dummy room option or dummy credit score when an API fails to connect). Fictitious fallbacks pollute the LLM's cognitive context with fabricated data, causing the model to issue commitments or generate hallucinated confirmations to users based on phantom records.
+
+Under IRC-A, tools must execute bounded retries (3 to 4 attempts with exponential backoff). If connectivity cannot be established, the tool **must not synthesize false data**. Instead, it reports the incident to `unithos-error-manager` and returns a structured, capturable error payload explicitly identifying the root cause (`{"isError": true, "message": "Failed to connect to PMS API after 3 retries: 503 Service Unavailable"}`). This allows the cognitive agent to acknowledge the operational failure truthfully and propose realistic next steps to the user.
+
+### Native MCP Incident Governance
+
+The Incident Hub is itself a first-class citizen of the IRC-A network, registering as an MCP server with standard capabilities:
+- `report_incident(service_name, error_type, message, severity, details)`: Direct programmatic ingestion.
+- `list_incidents(status, severity, limit)`: Topology-wide health querying.
+- `resolve_incident(incident_id, notes)`: Lifecycle closure.
+
+This enables autonomous **SRE & DevOps Cognitive Agents** to monitor the entire distributed agent fleet, triage incidents, and trigger automated recovery runbooks via standard IRC-A capability discovery.
 
 ---
 
@@ -551,11 +670,16 @@ class BFAAgent(ABC):
 
 The tool-server base class mirrors the agent's guarantees at the execution door. **New in v1.3.0**, DET enforcement is environment-driven, so the same code serves BFA-governed and standard-MCP deployments:
 
-```
+```python
 import os
 import time
+import asyncio
+import logging
+import httpx
 from fastmcp import FastMCP
 from bfa_sdk.core.paseto import verify_paseto_v4_public
+
+logger = logging.getLogger("BFAMCP")
 
 class BFAMCP(FastMCP):
     def __init__(self, name: str, **kwargs):
@@ -568,6 +692,7 @@ class BFAMCP(FastMCP):
         self.bfa_enabled = bool(os.getenv("BFA_GATEWAY_PUBLIC_KEY"))
         self.gateway_public_key = os.getenv("BFA_GATEWAY_PUBLIC_KEY")
         self.node_id = os.getenv("IRCA_NODE_ID", name)
+        self.error_manager_url = os.getenv("ERROR_MANAGER_URL", "http://unithos-error-manager:3005")
         self._register_det_middleware()
 
     def _register_det_middleware(self):
@@ -583,7 +708,19 @@ class BFAMCP(FastMCP):
             if not self._verify_det(det, ctx):
                 return self._det_error("Invalid, expired, or out-of-scope DET")
 
-            return await call_next(ctx)
+            try:
+                result = await call_next(ctx)
+                # Anti-Echo Protocol: ensure result does not mirror raw input arguments
+                return self._sanitize_anti_echo(result, ctx.arguments)
+            except Exception as exc:
+                # Asynchronous, non-blocking incident dispatch to centralized hub
+                asyncio.create_task(self.report_incident_async(
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    severity="HIGH",
+                    details={"tool": ctx.name}
+                ))
+                raise exc
 
     def _verify_det(self, det: str, ctx) -> bool:
         try:
@@ -602,6 +739,29 @@ class BFAMCP(FastMCP):
             if ctx.arguments.get(key) != value:
                 return False
         return True
+
+    def _sanitize_anti_echo(self, result: dict | any, input_args: dict) -> dict | any:
+        """Enforces Anti-Echo contract: prunes echoed input parameters from dictionary results."""
+        if not isinstance(result, dict) or not input_args:
+            return result
+        # Remove keys that strictly echo input parameters to conserve context tokens
+        return {k: v for k, v in result.items() if k not in input_args or k in ("id", "status")}
+
+    async def report_incident_async(self, error_type: str, message: str, severity: str = "HIGH", details: dict = None):
+        """Dispatches incident report asynchronously without blocking the execution loop."""
+        try:
+            payload = {
+                "service_name": self.node_id,
+                "error_type": error_type,
+                "message": message,
+                "severity": severity,
+                "details": details or {}
+            }
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                await client.post(f"{self.error_manager_url}/incidents", json=payload)
+        except Exception as report_err:
+            # Graceful local fallback: hub degradation never crashes the tool server
+            logger.warning("Local fallback: could not reach Centralized Incident Hub: %s", report_err)
 
     @staticmethod
     def _det_error(msg: str):
@@ -633,6 +793,7 @@ sequenceDiagram
     participant Gateway as BFA Gateway (Broker)
     participant FAISS as FAISS Index
     participant MCP as MCP Tool Server (BFA Internal)
+    participant ErrorHub as Incident Hub (unithos-error-manager)
     participant CoreDB as Core DB (External Backend)
 
     %% Node Registration
@@ -646,16 +807,16 @@ sequenceDiagram
 
     %% Phase 1: Capability Inquiry
     rect rgb(255, 248, 230)
-        note right of Client: Phase 1 - Capability Inquiry (stateless, no signature)
+        note right of Client: Phase 1 - Capability Inquiry (stateless, dual-contract discovery)
         Client->>Gateway: POST /discover (Semantic Intent + Session PASETO)
         Gateway->>FAISS: Evaluate Channel Masking (.env) & Cosine Similarity
         FAISS-->>Gateway: Return Authorized Tool Match
-        Gateway-->>Client: Tool + Endpoint + input_schema ("I need customer_id")
+        Gateway-->>Client: Tool + Endpoint + input_schema + output_schema
     end
 
     %% Agent-side parameter gathering
     rect rgb(245, 245, 245)
-        note over Client: Agent gathers parameters locally (conversation, user, other tools)
+        note over Client: Agent plans with output_schema & gathers parameters locally
     end
 
     %% Phase 2: Authorization and DET Minting
@@ -671,59 +832,66 @@ sequenceDiagram
     %% Direct Invocation and Isolated Data Connection
     rect rgb(240, 255, 240)
         note right of Client: Direct Peer-to-Peer mTLS Call
-        Client->>MCP: FastMCP Invoke (Args + DET PASETO) ("Hey, I have this ticket...")
+        Client->>MCP: FastMCP Invoke (Args + DET PASETO)
         note over MCP: Offline SDK Signature Validation using Gateway PubKey
         note over MCP: Verify Scope & parameter lock (args == DET.permitted_params)
-        MCP->>CoreDB: Execute Parameterized SQL (Only component with database drivers)
-        CoreDB-->>MCP: Return Raw ResultSet
-        MCP-->>Client: Return Sanitized JSON Payload (Absolute Data Isolation)
+
+        alt Normal Transaction Flow
+            MCP->>CoreDB: Execute Parameterized SQL (Exclusive DB Access)
+            CoreDB-->>MCP: Return Raw ResultSet
+            note over MCP: Sanitize Output via Anti-Echo Protocol (Prune Input Args)
+            MCP-->>Client: Return Sanitized JSON Payload (score, risk_level, message)
+        else Backend Outage Flow (No Silent Fallbacks)
+            MCP->>CoreDB: Bounded Retries (3-4 Attempts with Backoff)
+            CoreDB-->>MCP: Connection Timeout / 503 Unavailable
+            MCP-)ErrorHub: Async Non-Blocking Incident Dispatch (Normalized SHA-256)
+            note over ErrorHub: Sliding Window Deduplication & Multi-Channel Alert
+            MCP-->>Client: Structured Error {"isError": true, "message": "API unreachable after 3 retries: 503"}
+        end
     end
 ```
 
 ### Mono-spaced Flow (ASCII)
 
 ```
-[Credit Agent]            [BFA Gateway]            [FAISS Index]            [MCP Tool Server]       [Core DB (External)]
-      |                         |                        |                          |                     |
-      |----- (1) Register ----->|                        |                          |                     |
-      |                         |                        |                          |                     |
-      |<-- (2) Challenge -------|                        |                          |                     |
-      |                         |                        |                          |                     |
-      |--- (3) Sign Challenge ->|                        |                          |                     |
-      |                         |                        |                          |                     |
-      |<-- (4) Session Token ---|                        |                          |                     |
-      |                         |                        |                          |                     |
-      |=== PHASE 1: CAPABILITY INQUIRY (stateless, unsigned) ========================|                     |
-      |                         |                        |                          |                     |
-      |--- (5) POST /discover ->|                        |                          |                     |
-      |    "Who can check       |---- (6) Search FAISS ->|                          |                     |
-      |     credit history?"    |    (masked by channel) |                          |                     |
-      |                         |                        |                          |                     |
-      |                         |<-- (7) Match + schema -|                          |                     |
-      |                         |                        |                          |                     |
-      |<-- (8) "BankDataRiver --|                        |                          |                     |
-      |     needs customer_id"  |                        |                          |                     |
-      |                         |                        |                          |                     |
-      |=== AGENT-SIDE: gathers customer_id=882 ======================================|                     |
-      |                         |                        |                          |                     |
-      |=== PHASE 2: AUTHORIZATION (args presented, DET minted) ======================|                     |
-      |                         |                        |                          |                     |
-      |--- (9) POST /authorize ->                        |                          |                     |
-      |    (intent + tool +     |---- (10) Re-verify ----|                          |                     |
-      |     args:{id:882})      |     channels & match   |                          |                     |
-      |                         |                        |                          |                     |
-      |                         | (11) Mint DET with restricted_params locked        |                     |
-      |                         |                        |                          |                     |
-      |<-- (12) DET + URL ------|                        |                          |                     |
-      |    ("Take this ticket") |                        |                          |                     |
-      |                         |                        |                          |                     |
-      |---------------------- (13) DIRECT P2P INVOCATION (Args + DET) -------------->|                     |
-      |                            "Hey, BFA gave me this ticket..."                |-- (14) Verify DET   |
-      |                                                                             |   (Offline SDK)     |
-      |                                                                             |---- (15) Query ---->|
-      |                                                                             |                     |
-      |                                                                             |<--- (16) Data ------|
-      |<----------------------- (17) Parameterized JSON Payload ---------------------|                     |
+[Credit Agent]            [BFA Gateway]            [FAISS Index]            [MCP Tool Server]       [Incident Hub]      [Core DB (External)]
+      |                         |                        |                          |                      |                     |
+      |----- (1) Register ----->|                        |                          |                      |                     |
+      |<-- (2) Challenge -------|                        |                          |                      |                     |
+      |--- (3) Sign Challenge ->|                        |                          |                      |                     |
+      |<-- (4) Session Token ---|                        |                          |                      |                     |
+      |                         |                        |                          |                      |                     |
+      |=== PHASE 1: CAPABILITY INQUIRY (stateless, dual-contract) ==================|                      |                     |
+      |--- (5) POST /discover ->|                        |                          |                      |                     |
+      |    "Who can check       |---- (6) Search FAISS ->|                          |                      |                     |
+      |     credit history?"    |    (masked by channel) |                          |                      |                     |
+      |                         |<-- (7) Match + schemas |                          |                      |                     |
+      |<-- (8) Tool + Endpoint -|    (in & out schemas)  |                          |                      |                     |
+      |                         |                        |                          |                      |                     |
+      |=== AGENT-SIDE: Plans downstream using output_schema & gathers args =========|                      |                     |
+      |                         |                        |                          |                      |                     |
+      |=== PHASE 2: AUTHORIZATION (args presented, DET minted) =====================|                      |                     |
+      |--- (9) POST /authorize ->                        |                          |                      |                     |
+      |    (intent + tool +     |---- (10) Re-verify ----|                          |                      |                     |
+      |     args:{id:882})      |     channels & match   |                          |                      |                     |
+      |                         | (11) Mint DET with restricted_params locked       |                      |                     |
+      |<-- (12) DET + URL ------|                        |                          |                      |                     |
+      |                         |                        |                          |                      |                     |
+      |---------------------- (13) DIRECT P2P INVOCATION (Args + DET) ------------->|                      |                     |
+      |                                                                             |-- (14) Offline DET   |                     |
+      |                                                                             |   Validation         |                     |
+      |                                                                             |---- (15) Query --------------------------->|
+      |                                                                             |   (3-4 retries)      |                     |
+      |                                                                             |                      |                     |
+      | [SUCCESS PATH: Anti-Echo Protocol]                                          |<--- (16) Data -----------------------------|
+      |<----------------------- (17a) Clean Payload (score, risk_level) ------------|                      |                     |
+      |                                                                             |                      |                     |
+      | [FAILURE PATH: Centralized Incident Governance]                             |                      |                     |
+      |                                                                             |-- (16b) Async Dispatch                      |
+      |                                                                             |    (Normalized SHA-256)                      |
+      |                                                                             |--------------------->| (17b) Deduplicate   |
+      |                                                                             |                      |       & Alert Ops   |
+      |<----------------------- (17c) Structured Error (isError: true) -------------|                      |                     |
 ```
 
 ## 6.3 Network Isolation and Secure Late-Binding
@@ -777,7 +945,54 @@ To prevent dynamic instruction tampering, IRC-A enforces **Semantic Prompt Hash 
 
 This design guarantees that even if a conversational LLM attempts to dynamically mutate its system prompt under pressure from a user, the underlying SDK container will block execution at the door.
 
----
+## 7.4 Token Economization and the Anti-Echo Protocol
+
+A subtle yet devastating source of context window bloat in agentic architectures is the **Echo-Parameter Anti-Pattern**. In conventional tool designs, developers frequently mirror incoming request parameters back into the tool response payload (for example, returning `tenant_id`, `property_id`, `check_in_date`, `check_out_date`, `adults_count`, and `children_count` alongside the actual queried rooms).
+
+While common in human-centric REST APIs for debugging convenience, echoing input arguments into an LLM context window represents pure cognitive waste:
+- **Redundant Context Consumption:** The reasoning agent already holds the input arguments in its prompt memory or prior conversation history. Echoing 100–200 tokens of input metadata on every tool invocation wastes expensive context window budget.
+- **Compounding Latency & Costs:** In multi-step or multi-turn agent workflows involving 5 to 10 tool calls, echoed parameters compound into thousands of superfluous tokens. Because the entire conversation history is re-ingested on every LLM reasoning turn, this redundancy causes quadratic token growth, increases Time-to-First-Token (TTFT), and accelerates the degradation of retrieval attention (the "lost-in-the-middle" effect).
+
+```
++---------------------------------------------------------------------------------------+
+| TRADITIONAL TOOL RESPONSE (Echo Bloat)                                                |
+| {"tenant_id":"650595404224177", "check_in_date":"2026-10-17",                         |
+|  "check_out_date":"2026-10-19", "adults_count":2, "children_count":0,                 |
+|  "rooms":[{"room_id":"718943", "price":200}], "message":"Success"}                    |
+| ---> ~120 Context Tokens (65% pure redundancy)                                        |
++---------------------------------------------------------------------------------------+
+| IRC-A ANTI-ECHO RESPONSE (Minimalist Domain Projection)                               |
+| {"rooms":[{"room_id":"718943", "price":200}], "message":"Success"}                    |
+| ---> ~42 Context Tokens (65% token reduction per tool call)                           |
++---------------------------------------------------------------------------------------+
+```
+
+Under IRC-A, the **Anti-Echo Protocol** is strictly enforced: tool output payloads must contain *exclusively* synthesized domain results and operational status. All input arguments are stripped prior to returning data to the cognitive reasoning layer.
+
+## 7.5 The Anti-Hallucination Guarantee: Deterministic Chaining via `output_schema`
+
+In multi-agent collaborative graphs, agents must frequently chain tools sequentially: the output of Tool A serves as the input argument for Tool B. When an agent discovers tools through traditional mechanisms that declare only input schemas, the cognitive model must blindly "guess" the keys and shape of Tool A's prospective return payload before invoking it.
+
+This lack of return contract transparency triggers severe operational failure modes:
+1. **Property Hallucination:** The LLM anticipates a field named `customer_credit_rating`, whereas the backend tool outputs `credit_score`. Downstream reasoning crashes or branches into dead-end retries.
+2. **Exploratory Invocation Overhead:** Agents are forced to execute exploratory "dry-run" calls solely to inspect the return structure, doubling token consumption and execution latency.
+
+By formalizing **Bi-directional Capability Contracts** (`input_schema` + `output_schema`) in Phase 1 discovery, IRC-A provides the cognitive agent with exact, machine-readable foresight of the response structure before execution is even requested. The agent constructs its downstream synthesis plan with mathematical certainty, eliminating property hallucinations across complex multi-tool workflows.
+
+## 7.6 Elimination of Fictitious Fallbacks and Cascading Failure Deduplication
+
+When an external transactional backend (such as a core PMS, banking API, or credit bureau) experiences degradation, poorly architected tools often resort to "silent mock fallbacks"—returning hardcoded dummy rooms or simulated credit scores to avoid throwing an error.
+
+IRC-A classifies silent mock fallbacks as a critical architectural defect:
+- **False Commitments:** An agent that receives a fake "Standard Suite at \$150" will proceed to confirm availability and make binding commercial promises to a real customer based on non-existent inventory.
+- **Silent Corruption:** Upstream cognitive agents cannot differentiate simulated data from verified transactional truth.
+
+IRC-A mandates **Honest Failure Contracts**:
+1. **Bounded Exponential Retries:** The tool attempts 3 to 4 localized retries with exponential backoff.
+2. **Deterministic Capturable Error:** If recovery fails, the tool halts immediately and returns an unambiguous, structured error contract specifying the exact upstream cause (e.g. `{"isError": true, "message": "PMS API unreachable: 503 Service Unavailable"}`).
+3. **Decoupled Incident Ingestion:** Simultaneously, the tool dispatches an asynchronous, non-blocking incident payload to `unithos-error-manager`. Dynamic variables (UUIDs, timestamps, tenant IDs) are masked to produce a deterministic SHA-256 fingerprint, deduplicating the failure across a rolling temporal window (300s) and alerting on-call engineering without flooding notification channels.
+
+This ensures operational honesty: the agent acknowledges the temporary outage gracefully to the user, while the engineering team receives a single, actionable incident alert.
 
 # 8. Banking Case Study with Privilege Governance
 
@@ -785,10 +1000,11 @@ Let's review the secure architectural lifecycle of a mortgage application proces
 
 1. **The Request:** A customer interacts with the front-facing chat to request a mortgage loan.
 2. **Stateless Processing:** The Credit Agent (Reasoning Node) analyzes the goal. It holds no client files or credit databases in memory.
-3. **Capability Inquiry (`/discover`):** The Agent asks the BFA Gateway: _"I need to check credit histories for a mortgage applicant."_ The Gateway verifies channel overlap with `BankDataRiver` (`#credit-audit`), restricts the masked FAISS search, and answers: _"Yes — `fetch_customer_credit_score` is available, and it requires `customer_id`."_ Nothing is signed; no token exists yet.
-4. **Parameter Gathering (agent-side):** The Agent asks the customer for their identifier and obtains `customer_id=882` from the conversation.
+3. **Capability Inquiry (`/discover`):** The Agent asks the BFA Gateway: _"I need to check credit histories for a mortgage applicant."_ The Gateway verifies channel overlap with `BankDataRiver` (`#credit-audit`), restricts the masked FAISS search, and answers with the bi-directional capability contract: _"Yes — `fetch_customer_credit_score` is available; it requires `customer_id` and outputs `score`, `risk_level`, and `message`."_ Nothing is signed; no token exists yet.
+4. **Downstream Planning & Parameter Gathering:** The Agent inspects `output_schema`, anticipates subsequent credit thresholds deterministically, and obtains `customer_id=882` from the customer conversation.
 5. **Authorization (`/authorize`) and DET Issuance:** The Agent presents _"I need `fetch_customer_credit_score` for `customer_id=882`."_ The Gateway re-applies channel masking, confirms the match, and mints an ephemeral DET PASETO restricted to exactly: `fetch_customer_credit_score(customer_id="882")`. Because the arguments were presented at mint time, the parameter lockdown is exact by construction.
-6. **Direct P2P Invocation:** The Agent makes an mTLS call directly to the `BankDataRiver` MCP container, sending the parameters and the DET. The `BFAMCP` SDK verifies the Gateway's cryptographic signature **offline using the Gateway's public key** (completely avoiding a network round-trip to the BFA Gateway). Upon successful local validation of the token and parameters, the tool server connects exclusively to the internal transactional database, fetches the score, and returns a clean, sanitized JSON payload.
+6. **Direct P2P Invocation & Anti-Echo Delivery:** The Agent makes an mTLS call directly to the `BankDataRiver` MCP container, sending the parameters and the DET. The `BFAMCP` SDK verifies the Gateway's cryptographic signature **offline using the Gateway's public key** (completely avoiding a network round-trip to the BFA Gateway). Upon successful local validation of the token and parameters, the tool server connects exclusively to the internal transactional database, fetches the score, and applies the Anti-Echo Protocol—omitting `customer_id` and returning only the clean domain output (`{"score": 750, "risk_level": "low", "message": "Credit bureau rating retrieved successfully"}`).
+   - *Resilience Guarantee:* If the core database is unreachable, the tool attempts 3 bounded retries. If still failing, it dispatches an asynchronous, non-blocking incident to `unithos-error-manager` with normalized SHA-256 fingerprint deduplication, and returns a structured capturable error—strictly rejecting any fictitious/mock fallback.
 7. **A2A Compliance Delegation:** The Agent requests an AML check from the Compliance Agent, following the same two-phase convention: inquiry first ("who can audit AML?"), arguments second, DET minted with the audit scope locked. The Compliance Agent verifies the token's signature **offline using the Gateway's public key**, conducts its check using its private compliance tool, and sends back a binary check state.
 8. **Resolution:** The Agent merges the sanitized JSON outputs, maintains the cognitive conversation flow, and delivers the finalized loan approval options to the customer.
 
@@ -801,8 +1017,11 @@ Let's review the secure architectural lifecycle of a mortgage application proces
 | **System Scalability** | Manual modifications to the central orchestrator code; complete application redeployments. | New agents and tools register on-the-fly via HTTP POST to the Gateway's FAISS pool. | **Zero-Downtime Operations:** True microservices design; plug-and-play scaling of capabilities. |
 | **Prompt Overhead (Token Costs)** | Injecting technical API schemas of all enterprise tools into every agent's system prompt. | Vector search resolves only the highly similar and relevant tools dynamically at runtime; Phase 1 returns a single compact match descriptor. | **Massive Cost Savings:** Reduced context window utilization, lower token costs, and lower TTFT latency. |
 | **Capability Negotiation** | Agents must know tool signatures in advance or guess parameters at call time. | Two-phase flow: the network answers "who can help and what they need" before any execution right is granted; agents arrive at authorization with complete, correct arguments. | **Fewer Failed Calls:** Parameters are declared at registration and locked at authorization — no trial-and-error invocations against production systems. |
+| **Tool Chaining Predictability** | Cognitive models must guess return property keys from input signatures alone; frequent hallucination of intermediate field names. | Bi-directional capability contracts (`input_schema` + `output_schema`) declared at registration and exposed during Phase 1 discovery. | **Zero-Hallucination Tool Chaining:** Autonomous agents formulate multi-step plans with mathematically verified response structures before invocation. |
+| **Context Window Footprint** | Tools echo input arguments back in response payloads, causing quadratic context bloat over multi-turn conversations. | Anti-Echo Protocol strictly strips echoed request arguments, delivering only synthesized domain attributes and status. | **60-70% Payload Token Savings:** Preserves model attention, eliminates prompt bloat, and optimizes Time-to-First-Token (TTFT). |
+| **Failure Integrity & Incident Governance** | Silent mock fallbacks pollute LLM reasoning with fake data; ad-hoc error scripts cause notification storms during outages. | Centralized Incident Hub (`unithos-error-manager`) with normalized SHA-256 fingerprint deduplication, non-blocking dispatch, and honest failure contracts. | **Zero Alert Fatigue & Production Honesty:** Eradicates fictitious fallbacks; alerts on-call teams via Email/SMS without notification spam. |
 | **Data Protection & Compliance** | Standard MCP separates execution, but hosts accept any instruction. Compromised agents can call arbitrary tools or tamper with query arguments. | Ephemeral DETs with Parameter Lockdown are minted only after concrete arguments are presented, and are verified offline at the execution gate. | **Zero-Trust at the Data Boundary:** Absolute mitigation of privilege escalation and parameter manipulation attacks. |
-| **Development Lifecycle** | Security logic, handshake protocols, and token validation must be written manually. | Asymmetric handshakes, two-phase negotiation, and DET validations are handled natively in the SDK's Base Classes. | **Secure-by-Default:** Eradicates configuration errors and implementation bugs at the source. |
+| **Development Lifecycle** | Security logic, handshake protocols, and token validation must be written manually. | Asymmetric handshakes, two-phase negotiation, DET validations, and error dispatch hooks are handled natively in SDK Base Classes. | **Secure-by-Default:** Eradicates configuration errors and implementation bugs at the source. |
 | **Interoperability** | Each integration requires bespoke auth plumbing. | `BFAMCP` servers run unchanged in Mode B (standard FastMCP) when no BFA Gateway is present, and enforce DETs automatically in Mode A. | **Progressive Adoption:** Existing MCP estates can join an IRC-A network incrementally, without rewriting tool servers. |
 
 ---
@@ -811,20 +1030,21 @@ Let's review the secure architectural lifecycle of a mortgage application proces
 
 The IRC-A architecture demonstrates that the challenges of implementing generative AI inside enterprise environments are not solved by developing larger models or writing longer prompts, but by applying rigorous software engineering. By returning to Smalltalk's principles of messaging and isolated responsibilities, using decentralized capability pooling, and encapsulating zero-trust authorization in a base SDK class (`BFAAgent`) via Ephemeral Delegated Execution Tokens (DET), we can build agentic networks that are robust, secure, and ready for high-compliance production workloads.
 
-Version 1.3.0 strengthens this thesis at its most sensitive seam — the moment a cognitive agent obtains execution rights over a transactional system. By separating the question (_"who can help?"_) from the authorization (_"here are my exact arguments — sign them"_), IRC-A keeps the BFA Gateway stateless, makes the parameter lockdown exact by construction, eliminates wasted token mints, and allows inquiry results to be cached — all without weakening a single zero-trust boundary.
+Version 1.4.0 advances this thesis into industrial reliability and context economics. By coupling bi-directional capability contracts (`output_schema`) with the Anti-Echo Protocol, IRC-A guarantees hallucination-free tool chaining while drastically reducing LLM context window consumption. Concurrently, by establishing the Centralized Incident Management subsystem (`unithos-error-manager`) with deterministic SHA-256 deduplication and eradicating fictitious fallbacks, the architecture brings enterprise-grade fault observability and resilience to autonomous agent fleets without compromising Smalltalk-style isolation.
 
 To align with this, the BFA-SDK is distributed under a **Dual-License Model**:
 
-- **Open-Source Community Edition (AGPLv3):** Exposes 100% of the core security features—including token minting, two-phase negotiation, parameter lockdowns, and prompt-hash verification—guaranteeing that secure-by-default computing remains an open, un-gatekept standard.
-- **Commercial Enterprise Edition:** Licenses production-scale operational governance, real-time observability dashboards, and compliance SIEM audit pipelines. For details, refer to the Licensing & Feature Matrix.
+- **Open-Source Community Edition (AGPLv3):** Exposes 100% of the core security features—including token minting, two-phase negotiation, parameter lockdowns, prompt-hash verification, and Anti-Echo sanitization—guaranteeing that secure-by-default computing remains an open, un-gatekept standard.
+- **Commercial Enterprise Edition:** Licenses production-scale operational governance, real-time observability dashboards, multi-channel incident alerting dispatchers, and compliance SIEM audit pipelines. For details, refer to the Licensing & Feature Matrix.
 
 Our engineering roadmap for the BFA-SDK focuses on:
 
 1. **Unified Telemetry Middlewares:** Tracking latency, TTFT, and transaction success rates across FAISS-registered nodes, including per-phase (`/discover` vs `/authorize`) funnel analytics.
 2. **Edge Embedding Optimization:** Integrating local, optimized, and hardware-accelerated embedding transformers directly into the BFA Core Gateway.
 3. **Standardizing Interoperability:** Standardizing open-specification A2A handshake formats to ensure secure, cross-language interoperability (Python, Go, Rust).
-4. **Operational Governance Control Panel:** Deploying a secure, read-only monitoring dashboard that integrates telemetry visualization and channel-mapping audits, while enforcing that all node registrations remain strictly programmatic and deployment-driven (e.g., API/cURL-based deployment steps).
-5. **Declarative Capability Contracts:** Evolving `input_schema` into full JSON-Schema contracts with cross-field validation, so Phase 1 inquiries can report not just required fields but legal value domains.
+4. **Operational Governance Control Panel:** Deploying a secure, read-only monitoring dashboard that integrates telemetry visualization, incident lifecycle tracking, and channel-mapping audits, while enforcing that all node registrations remain strictly programmatic.
+5. **Cross-Field Semantic Contracts:** Extending `input_schema` and `output_schema` validation with declarative relational assertions (e.g., date ranges, currency consistency) evaluated prior to authorization.
+6. **Autonomous SRE Agents:** Implementing cognitive incident triage agents that consume `unithos-error-manager` MCP tools to execute automated diagnostic runbooks and remediation workflows.
 
 ---
 
@@ -832,6 +1052,8 @@ Our engineering roadmap for the BFA-SDK focuses on:
 
 | Version | Date | Summary of Changes |
 | --- | --- | --- |
+| 1.4.0 | October 2026 | **Bi-directional Capability Contracts, Anti-Echo Protocol & Centralized Incident Management:** Formalized dual capability contracts (`input_schema` + `output_schema`) in Phase 1 discovery to eliminate property hallucinations during multi-tool chaining. Enforced the Anti-Echo Protocol in `BFAMCP` to prune redundant input arguments from response payloads, drastically reducing context window token bloat. Formalized the Centralized Incident Management architectural pattern (`unithos-error-manager`) featuring normalized SHA-256 error fingerprint deduplication, sliding-window alerting throttling (Email/SMS/Webhooks), non-blocking asynchronous incident dispatch, elimination of silent mock fallbacks in production tools, and native MCP incident governance tools. |
 | 1.3.0 | October 2026 | **Two-phase capability negotiation:** `/discover` formalized as a stateless, unsigned, cacheable capability inquiry; new `/authorize` endpoint mints the DET only after concrete arguments are presented, with channel masking re-evaluated at authorization. `input_schema` added to the capability registration payload. `BFAMCP` gains environment-driven optional DET enforcement (Mode A strict / Mode B standard MCP) via `BFA_GATEWAY_PUBLIC_KEY`. Sequence diagrams, layered diagram, case study, and benefits matrix updated accordingly. |
 | 1.2.0 | August 2026 | Added §7.3 Semantic Prompt Hash Integrity Verification; dual-license model; mermaid/ASCII diagram pair. |
 | 1.1.0 | July 2026 | Initial public release: BFA customs-office perimeter, FAISS masked discovery, DET parameter lockdown, multi-agent loop tracing, prompt rewriting. |
+
